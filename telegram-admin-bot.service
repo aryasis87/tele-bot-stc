@@ -1,0 +1,18 @@
+[Unit]
+Description=Telegram Admin Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/telegram-admin-bot
+Environment=PATH=/opt/telegram-admin-bot/venv/bin
+ExecStart=/opt/telegram-admin-bot/venv/bin/python /opt/telegram-admin-bot/src/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=telegram-admin-bot
+
+[Install]
+WantedBy=multi-user.target

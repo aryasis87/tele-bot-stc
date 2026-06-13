@@ -1,0 +1,30 @@
+# ── Kredensial & rahasia (JANGAN pernah di-commit) ──
+# Catatan: .gitignore TIDAK mendukung komentar inline — komentar harus 1 baris sendiri.
+.env
+.env.*
+!.env.example
+# HAR capture berisi password + token Stockity live
+*.har
+*-service-account.json
+
+# ── Python ──
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+build/
+dist/
+
+# ── Log & runtime ──
+logs/
+*.log
+
+# ── Editor / OS ──
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
