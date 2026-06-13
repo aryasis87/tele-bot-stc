@@ -6,11 +6,21 @@ Menggunakan curl binary untuk bypass Cloudflare (sama dengan backend).
 
 import asyncio
 import json
+import os
+import shutil
 import subprocess
 from typing import Optional, Dict, Any, List
 
 from config import STOCKITY_API_URL, DEFAULT_USER_AGENT, DEFAULT_TIMEZONE, logger
 from models import UserBalance, UserProfile
+
+# Path curl absolut — jangan bergantung pada PATH proses. systemd service
+# men-set Environment=PATH=.../venv/bin (tanpa /usr/bin), sehingga "curl" polos
+# tidak ketemu → semua panggilan Stockity gagal. Resolusi tahan-banting:
+CURL_BIN = shutil.which("curl") or next(
+    (p for p in ("/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl") if os.path.exists(p)),
+    "curl",
+)
 
 
 class StockityAPIError(Exception):
@@ -55,7 +65,7 @@ class StockityAPI:
             header_args.extend(["-H", f"{k}: {v}"])
 
         cmd = [
-            "curl", "-s", "-X", "GET", url,
+            CURL_BIN, "-s", "-X", "GET", url,
             "--compressed",           # auto-decompress gzip/br dari server
             *header_args,
             "-H", "Content-Type: application/json",
