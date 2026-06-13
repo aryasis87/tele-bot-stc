@@ -148,10 +148,12 @@ class TelegramAdminBot:
         logger.info("=" * 60)
 
         # Build application
+        # Catatan: post_init TIDAK dipanggil pada alur manual (initialize/start/
+        # updater.start_polling) — hanya pada run_polling()/run_webhook(). Karena
+        # itu _setup_notifications() dipanggil eksplisit setelah initialize().
         self.application = (
             Application.builder()
             .token(TELEGRAM_BOT_TOKEN)
-            .post_init(self._post_init)
             .build()
         )
 
@@ -166,6 +168,7 @@ class TelegramAdminBot:
         if BOT_MODE == "webhook" and WEBHOOK_URL:
             logger.info("Running in WEBHOOK mode on port %d", WEBHOOK_PORT)
             await self.application.initialize()
+            await self._setup_notifications()
             await self.application.start()
 
             await self.application.updater.start_webhook(
@@ -185,6 +188,7 @@ class TelegramAdminBot:
         else:
             logger.info("Running in POLLING mode")
             await self.application.initialize()
+            await self._setup_notifications()
             await self.application.start()
             await self.application.updater.start_polling(drop_pending_updates=True)
 
