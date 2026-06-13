@@ -30,6 +30,7 @@ class NotificationService:
         self._tasks: List[asyncio.Task] = []
         self._deposit_callbacks: List[Callable[[DepositEvent], Coroutine]] = []
         self._user_callbacks: List[Callable[[NotificationEvent], Coroutine]] = []
+        self._login_callbacks: List[Callable] = []
 
     # ============================================================
     # CALLBACK REGISTRATION
@@ -42,6 +43,10 @@ class NotificationService:
     def on_new_user(self, callback: Callable[[NotificationEvent], Coroutine]):
         """Register callback untuk event user baru."""
         self._user_callbacks.append(callback)
+
+    def on_login(self, callback):
+        """Register callback untuk event user login (last_login berubah)."""
+        self._login_callbacks.append(callback)
 
     # ============================================================
     # LIFECYCLE
@@ -246,6 +251,13 @@ class NotificationService:
         initial_users = await db.list_whitelist_users(limit=1000)
         self._known_whitelist_ids = {u.id for u in initial_users if u.id}
 
+        # Baseline last_login per user → deteksi LOGIN via perubahan timestamp.
+        # Diisi dari state awal agar login LAMA tidak ikut di-notify saat startup.
+        self._last_login_map = {
+            (u.user_id or u.id): u.last_login
+            for u in initial_users if (u.user_id or u.id)
+        }
+
         logger.info("Initial whitelist: %d users tracked", len(self._known_whitelist_ids))
 
         # Polling interval: 30 detik
@@ -263,9 +275,8 @@ class NotificationService:
                 await asyncio.sleep(1)
 
     async def _poll_whitelist_changes(self):
-        """Poll whitelist users untuk deteksi user baru."""
-        # Ambil user yang ditambahkan dalam 1 jam terakhir
-        recent_users = await db.list_whitelist_users(limit=100)
+        """Poll whitelist users untuk deteksi user baru + login (perubahan last_login)."""
+        recent_users = await db.list_whitelist_users(limit=1000)
         current_ids = {u.id for u in recent_users if u.id}
 
         # Deteksi user baru (ada di current tapi tidak di known)
@@ -305,6 +316,24 @@ class NotificationService:
                         await callback(event)
                     except Exception as e:
                         logger.error("New user callback error: %s", e)
+
+        # ── Deteksi LOGIN: last_login berubah dari baseline ──────────────────
+        for user in recent_users:
+            key = user.user_id or user.id
+            if not key:
+                continue
+            if key not in self._last_login_map:
+                # User baru muncul → catat baseline saja, jangan fire login
+                # (sudah dapat notif "user baru" di atas, hindari dobel).
+                self._last_login_map[key] = user.last_login
+                continue
+            if user.last_login and user.last_login != self._last_login_map[key]:
+                self._last_login_map[key] = user.last_login
+                for callback in self._login_callbacks:
+                    try:
+                        await callback(user)
+                    except Exception as e:
+                        logger.error("Login callback error: %s", e)
 
         # Update known set
         self._known_whitelist_ids = current_ids
@@ -390,6 +419,7 @@ class NotificationService:
             f"━━━━━━━━━━━━━━━━━━━━━"
         )
         await self.send_to_admins(message)
+        await self.send_to_channel(message)
 
 
 # Singleton akan diinisialisasi di main.py setelah bot dibuat

@@ -105,6 +105,7 @@ class TelegramAdminBot:
         # Register callbacks
         self.notification_service.on_deposit(self._on_deposit)
         self.notification_service.on_new_user(self._on_new_user)
+        self.notification_service.on_login(self._on_login)
 
         # Start services
         await self.notification_service.start()
@@ -118,6 +119,10 @@ class TelegramAdminBot:
     async def _on_new_user(self, event):
         """Callback saat user baru terdeteksi."""
         await self.notification_service.send_new_user_notification(event)
+
+    async def _on_login(self, user):
+        """Callback saat user login (last_login berubah)."""
+        await self.notification_service.send_login_notification(user.user_id, user.email)
 
     async def _post_init(self, application: Application):
         """Hook yang dipanggil setelah bot diinisialisasi."""
