@@ -538,46 +538,49 @@ class SupabaseDB:
             return []
 
     async def save_deposit_event(self, event: DepositEvent) -> bool:
-        """Simpan event deposit yang terdeteksi."""
-        try:
-            data = {
-                "user_id": event.user_id,
-                "email": event.email,
-                "amount": event.amount,
-                "currency": event.currency,
-                "previous_balance": event.previous_balance,
-                "new_balance": event.new_balance,
-                "detected_at": event.detected_at.isoformat(),
-                "transaction_id": event.transaction_id,
-            }
-            if event.transaction_id:
-                # Dedup tanpa bergantung pada UNIQUE INDEX transaction_id (DB lama
-                # tidak punya → upsert on_conflict gagal dgn 42P10). Cek dulu, lalu
-                # insert kalau belum ada.
-                existing = await asyncio.to_thread(
-                    lambda: self.client.table("deposit_events")
-                    .select("id").eq("transaction_id", event.transaction_id)
-                    .limit(1).execute()
-                )
-                if existing.data:
-                    return True  # sudah tersimpan → skip (anti-duplikat)
-
-            # Generate `id` sendiri (max+1) agar TIDAK memakai sequence
-            # deposit_events_id_seq — di DB lama service_role tak punya hak USAGE
-            # pada sequence (error 42501). Di-serialize dengan lock (proses tunggal).
-            async with _deposit_id_lock:
-                res = await asyncio.to_thread(
-                    lambda: self.client.table("deposit_events")
-                    .select("id").order("id", desc=True).limit(1).execute()
-                )
-                data["id"] = ((res.data[0]["id"] if res.data else 0) or 0) + 1
-                await asyncio.to_thread(
-                    lambda: self.client.table("deposit_events").insert(data).execute()
-                )
-            return True
-        except Exception as e:
-            logger.error(f"save_deposit_event error: {e}")
-            return False
+        """Simpan event deposit (serialize + retry koneksi transient)."""
+        data = {
+            "user_id": event.user_id,
+            "email": event.email,
+            "amount": event.amount,
+            "currency": event.currency,
+            "previous_balance": event.previous_balance,
+            "new_balance": event.new_balance,
+            "detected_at": event.detected_at.isoformat(),
+            "transaction_id": event.transaction_id,
+        }
+        # Semua akses DB di-serialize dalam lock + retry saat "Server disconnected".
+        # Client Supabase sync dipanggil lewat thread → rentan putus koneksi saat
+        # banyak save berbarengan; lock mencegah pemakaian client paralel & balapan
+        # id. `id` dibuat sendiri (max+1) supaya tidak menyentuh sequence (42501),
+        # dan transaction_id dicek dulu sebagai anti-duplikat (tanpa unique index).
+        for attempt in range(3):
+            try:
+                async with _deposit_id_lock:
+                    if event.transaction_id:
+                        existing = await asyncio.to_thread(
+                            lambda: self.client.table("deposit_events")
+                            .select("id").eq("transaction_id", event.transaction_id)
+                            .limit(1).execute()
+                        )
+                        if existing.data:
+                            return True  # sudah tersimpan → skip
+                    res = await asyncio.to_thread(
+                        lambda: self.client.table("deposit_events")
+                        .select("id").order("id", desc=True).limit(1).execute()
+                    )
+                    data["id"] = ((res.data[0]["id"] if res.data else 0) or 0) + 1
+                    await asyncio.to_thread(
+                        lambda: self.client.table("deposit_events").insert(data).execute()
+                    )
+                return True
+            except Exception as e:
+                if "disconnect" in str(e).lower() and attempt < 2:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                    continue
+                logger.error(f"save_deposit_event error: {e}")
+                return False
+        return False
 
     # ============================================================
     # STATISTICS
