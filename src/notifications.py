@@ -6,7 +6,7 @@ Notification System
 """
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Callable, Coroutine
 
 from telegram import Bot
@@ -19,6 +19,25 @@ from config import (
 from database import db
 from stockity_api import StockityAPI, StockityAPIError
 from models import DepositEvent, NotificationEvent, UserBalance
+
+
+# Hanya anggap whitelist user "baru" jika ditambahkan < ambang ini (detik) yang
+# lalu. Mencegah BANJIR notifikasi saat baseline deteksi sempat kosong (mis. load
+# awal gagal) → tanpa ini, semua user lama bisa ditandai "baru" sekaligus.
+NEW_USER_MAX_AGE_SECONDS = 600  # 10 menit
+
+
+def _added_at_is_recent(added_at_iso, max_age_sec: int = NEW_USER_MAX_AGE_SECONDS) -> bool:
+    """True jika added_at (string ISO/timestamptz) berusia <= max_age_sec dari sekarang (UTC)."""
+    if not added_at_iso:
+        return False
+    try:
+        dt = datetime.fromisoformat(str(added_at_iso).replace("Z", "+00:00"))
+    except Exception:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt).total_seconds() <= max_age_sec
 
 
 class NotificationService:
@@ -277,6 +296,14 @@ class NotificationService:
     async def _poll_whitelist_changes(self):
         """Poll whitelist users untuk deteksi user baru + login (perubahan last_login)."""
         recent_users = await db.list_whitelist_users(limit=1000)
+
+        # Guard: fetch kosong biasanya = error sementara (list_whitelist_users
+        # mengembalikan [] saat exception). Jangan proses & jangan timpa baseline
+        # jadi kosong — kalau tidak, poll berikutnya akan menandai SEMUA user
+        # sebagai "baru" dan membanjiri notifikasi.
+        if not recent_users:
+            return
+
         current_ids = {u.id for u in recent_users if u.id}
 
         # Deteksi user baru (ada di current tapi tidak di known)
@@ -284,6 +311,11 @@ class NotificationService:
 
         for user in recent_users:
             if user.id in new_ids:
+                # Hanya notify kalau benar-benar baru ditambahkan (added_at masih
+                # segar). User lama/backfill/recovery TIDAK memicu notif walau
+                # baseline sempat kosong → cegah banjir notifikasi.
+                if not _added_at_is_recent(user.added_at):
+                    continue
                 # User baru terdeteksi!
                 added_by = user.added_by or "system"
                 is_self_register = added_by == "system"
