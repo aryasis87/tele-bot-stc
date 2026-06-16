@@ -17,7 +17,7 @@ from telegram.ext import (
 from config import TELEGRAM_BOT_TOKEN, BOT_MODE, WEBHOOK_URL, WEBHOOK_PORT, logger
 from database import db
 from notifications import NotificationService
-from access_gate import access_gate, ACCESS_PASSWORD
+from access_gate import access_gate, cmd_setpassword, ACCESS_PASSWORD
 from handlers import (
     # Core
     cmd_start, cmd_help, cmd_ping, cmd_myid,
@@ -60,6 +60,7 @@ class TelegramAdminBot:
             CommandHandler("help", cmd_help),
             CommandHandler("ping", cmd_ping),
             CommandHandler("myid", cmd_myid),
+            CommandHandler("setpassword", cmd_setpassword),
 
             # Admin management
             CommandHandler("admins", cmd_admins),
