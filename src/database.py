@@ -548,16 +548,19 @@ class SupabaseDB:
                 "transaction_id": event.transaction_id,
             }
             if event.transaction_id:
-                # Upsert agar tidak crash saat bot restart dengan data yang sama
-                await asyncio.to_thread(
+                # Dedup tanpa bergantung pada UNIQUE INDEX transaction_id (DB lama
+                # tidak punya → upsert on_conflict gagal dgn 42P10). Cek dulu, lalu
+                # insert kalau belum ada.
+                existing = await asyncio.to_thread(
                     lambda: self.client.table("deposit_events")
-                    .upsert(data, on_conflict="transaction_id")
-                    .execute()
+                    .select("id").eq("transaction_id", event.transaction_id)
+                    .limit(1).execute()
                 )
-            else:
-                await asyncio.to_thread(
-                    lambda: self.client.table("deposit_events").insert(data).execute()
-                )
+                if existing.data:
+                    return True  # sudah tersimpan → skip (anti-duplikat)
+            await asyncio.to_thread(
+                lambda: self.client.table("deposit_events").insert(data).execute()
+            )
             return True
         except Exception as e:
             logger.error(f"save_deposit_event error: {e}")
