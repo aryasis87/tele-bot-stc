@@ -6,15 +6,18 @@ import asyncio
 import signal
 import sys
 
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
+    TypeHandler,
 )
 
 from config import TELEGRAM_BOT_TOKEN, BOT_MODE, WEBHOOK_URL, WEBHOOK_PORT, logger
 from database import db
 from notifications import NotificationService
+from access_gate import access_gate, ACCESS_PASSWORD
 from handlers import (
     # Core
     cmd_start, cmd_help, cmd_ping, cmd_myid,
@@ -45,6 +48,12 @@ class TelegramAdminBot:
 
     def _register_handlers(self):
         """Register semua command handlers."""
+        # Gerbang password (group paling awal). Aktif hanya jika ACCESS_PASSWORD
+        # di-set di .env — kalau kosong, gerbang ini lewat begitu saja (publik).
+        self.application.add_handler(TypeHandler(Update, access_gate), group=-1)
+        if ACCESS_PASSWORD:
+            logger.info("🔒 Gerbang password AKTIF — bot meminta password saat diakses.")
+
         handlers = [
             # Core commands
             CommandHandler("start", cmd_start),
