@@ -16,6 +16,9 @@ from models import (
     UserBalance, UserProfile, UserStatistics, DepositEvent
 )
 
+# Serialize pembuatan id deposit_events (max+1) supaya tidak balapan antar task.
+_deposit_id_lock = asyncio.Lock()
+
 
 class SupabaseDB:
     """Singleton client untuk Supabase."""
@@ -558,9 +561,19 @@ class SupabaseDB:
                 )
                 if existing.data:
                     return True  # sudah tersimpan → skip (anti-duplikat)
-            await asyncio.to_thread(
-                lambda: self.client.table("deposit_events").insert(data).execute()
-            )
+
+            # Generate `id` sendiri (max+1) agar TIDAK memakai sequence
+            # deposit_events_id_seq — di DB lama service_role tak punya hak USAGE
+            # pada sequence (error 42501). Di-serialize dengan lock (proses tunggal).
+            async with _deposit_id_lock:
+                res = await asyncio.to_thread(
+                    lambda: self.client.table("deposit_events")
+                    .select("id").order("id", desc=True).limit(1).execute()
+                )
+                data["id"] = ((res.data[0]["id"] if res.data else 0) or 0) + 1
+                await asyncio.to_thread(
+                    lambda: self.client.table("deposit_events").insert(data).execute()
+                )
             return True
         except Exception as e:
             logger.error(f"save_deposit_event error: {e}")
